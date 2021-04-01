@@ -24,15 +24,19 @@
 #include <vector>
 
 #include <ignition/common/Profiler.hh>
-#include <ignition/plugin/Register.hh>
 
 #include <sdf/Sensor.hh>
 
 #include <ignition/math/Helpers.hh>
 
+// This plugin loads another plugin, so it shouldn't include Register.hh
+#include <ignition/plugin/RegisterMore.hh>
+
 #include <ignition/rendering/Scene.hh>
 #include <ignition/sensors/CameraSensor.hh>
+#include <ignition/sensors/DepthCameraSensor.hh>
 #include <ignition/sensors/RenderingSensor.hh>
+#include <ignition/sensors/RgbdCameraSensor.hh>
 #include <ignition/sensors/ThermalCameraSensor.hh>
 #include <ignition/sensors/Manager.hh>
 
@@ -602,6 +606,18 @@ std::string Sensors::CreateSensor(const Entity &_entity,
            << this->dataPtr->ambientTemperatureGradient << " K/m. "
            << "The resulting temperature range is: " << tempRange
            << " Kelvin." << std::endl;
+  }
+
+  // Use all supported sensor types to make sure we load their symbols
+  auto depthCamera = dynamic_cast<sensors::DepthCameraSensor *>(sensor);
+  if (nullptr != depthCamera)
+  {
+    igndbg << "Loaded a depth camera" << std::endl;
+  }
+  auto rgbdCamera = dynamic_cast<sensors::RgbdCameraSensor *>(sensor);
+  if (nullptr != rgbdCamera)
+  {
+    igndbg << "Loaded an RGBD camera" << std::endl;
   }
 
   return sensor->Name();
