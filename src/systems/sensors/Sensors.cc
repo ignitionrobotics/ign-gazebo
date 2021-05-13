@@ -515,8 +515,9 @@ std::string Sensors::CreateSensor(const Entity &_entity,
     return std::string();
   }
 
-  // Create within ign-sensors
-  auto sensorId = this->dataPtr->sensorManager.CreateSensor(_sdf);
+  // Create using ign-sensors
+  ignition::sensors::SensorId sensorId =
+    this->dataPtr->sensorManager.CreateSensor(_sdf);
   auto sensor = this->dataPtr->sensorManager.Sensor(sensorId);
 
   // Add to sensorID -> entity map
