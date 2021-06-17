@@ -7,19 +7,31 @@ jobs:
     runs-on: ubuntu-latest
     name: Ubuntu Bionic CI
     steps:
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v1
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.CR_PAT }}
       - name: Checkout
         uses: actions/checkout@v2
       - name: Compile and test
         id: ci
-        uses: ignition-tooling/action-ignition-ci@bionic
+        uses: ignition-tooling/action-ignition-ci@ign-tooling-bionic
         with:
           codecov-enabled: true
   focal-ci:
     runs-on: ubuntu-latest
     name: Ubuntu Focal CI
     steps:
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v1
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.CR_PAT }}
       - name: Checkout
         uses: actions/checkout@v2
       - name: Compile and test
         id: ci
-        uses: ignition-tooling/action-ignition-ci@focal
+        uses: ignition-tooling/action-ignition-ci@ign-tooling-focal
