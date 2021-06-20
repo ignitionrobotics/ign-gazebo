@@ -49,6 +49,7 @@ set(tests
   sdf_frame_semantics.cc
   sdf_include.cc
   touch_plugin.cc
+  tracked_vehicle_system.cc
   triggered_publisher.cc
   user_commands.cc
   velocity_control_system.cc
