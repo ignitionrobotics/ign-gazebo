@@ -1261,7 +1261,7 @@ void PhysicsPrivate::CreatePhysicsEntities(const EntityComponentManager &_ecm)
         }
         return true;
       });
-}
+}  // NOLINT readability/fn_size
 
 //////////////////////////////////////////////////
 void PhysicsPrivate::RemovePhysicsEntities(const EntityComponentManager &_ecm)
