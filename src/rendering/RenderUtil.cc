@@ -51,12 +51,14 @@
 #include <ignition/rendering/Scene.hh>
 
 #include "ignition/gazebo/components/Actor.hh"
+#include "ignition/gazebo/components/BoundingBoxCamera.hh"
 #include "ignition/gazebo/components/Camera.hh"
 #include "ignition/gazebo/components/CastShadows.hh"
 #include "ignition/gazebo/components/Collision.hh"
 #include "ignition/gazebo/components/DepthCamera.hh"
 #include "ignition/gazebo/components/GpuLidar.hh"
 #include "ignition/gazebo/components/Geometry.hh"
+#include "ignition/gazebo/components/SemanticLabel.hh"
 #include "ignition/gazebo/components/LaserRetro.hh"
 #include "ignition/gazebo/components/Light.hh"
 #include "ignition/gazebo/components/LightCmd.hh"
@@ -69,6 +71,7 @@
 #include "ignition/gazebo/components/Pose.hh"
 #include "ignition/gazebo/components/RgbdCamera.hh"
 #include "ignition/gazebo/components/Scene.hh"
+#include "ignition/gazebo/components/SegmentationCamera.hh"
 #include "ignition/gazebo/components/SourceFilePath.hh"
 #include "ignition/gazebo/components/Temperature.hh"
 #include "ignition/gazebo/components/TemperatureRange.hh"
@@ -220,6 +223,9 @@ class ignition::gazebo::RenderUtilPrivate
   /// All temperatures are in Kelvin.
   public: std::map<Entity, std::tuple<float, float, std::string>> entityTemp;
 
+  /// \brief A map of entity ids and label data for datasets annotations
+  public: std::unordered_map<Entity, int> entityLabel;
+
   /// \brief A map of entity ids and wire boxes
   public: std::unordered_map<Entity, ignition::rendering::WireBoxPtr> wireBoxes;
 
@@ -351,7 +357,14 @@ class ignition::gazebo::RenderUtilPrivate
   /// <resolution, temperature range (min, max)>
   public:std::unordered_map<Entity,
       std::tuple<double, components::TemperatureRangeInfo>> thermalCameraData;
+
+  /// \brief Update the visuals with label user data
+  /// \param[in] _entityLabel Map with key visual entity id and value label
+  public: void UpdateVisualLabels(
+    const std::unordered_map<Entity, int> &_entityLabel);
 };
+
+
 
 //////////////////////////////////////////////////
 RenderUtil::RenderUtil() : dataPtr(std::make_unique<RenderUtilPrivate>())
@@ -645,6 +658,7 @@ void RenderUtil::Update()
   auto actorTransforms = std::move(this->dataPtr->actorTransforms);
   auto actorAnimationData = std::move(this->dataPtr->actorAnimationData);
   auto entityTemp = std::move(this->dataPtr->entityTemp);
+  auto entityLabel = std::move(this->dataPtr->entityLabel);
   auto newWireframeVisualLinks =
     std::move(this->dataPtr->newWireframeVisualLinks);
   auto newCollisionLinks = std::move(this->dataPtr->newCollisionLinks);
@@ -665,6 +679,7 @@ void RenderUtil::Update()
   this->dataPtr->actorTransforms.clear();
   this->dataPtr->actorAnimationData.clear();
   this->dataPtr->entityTemp.clear();
+  this->dataPtr->entityLabel.clear();
   this->dataPtr->newWireframeVisualLinks.clear();
   this->dataPtr->newCollisionLinks.clear();
   this->dataPtr->thermalCameraData.clear();
@@ -1104,8 +1119,7 @@ void RenderUtil::Update()
     if (!node)
       continue;
 
-    auto visual =
-        std::dynamic_pointer_cast<rendering::Visual>(node);
+    auto visual = std::dynamic_pointer_cast<rendering::Visual>(node);
     if (!visual)
       continue;
 
@@ -1119,6 +1133,9 @@ void RenderUtil::Update()
       visual->SetUserData("temperature", heatSignature);
     }
   }
+
+  this->dataPtr->UpdateVisualLabels(entityLabel);
+
 
   // create new wireframe visuals
   {
@@ -1243,6 +1260,8 @@ void RenderUtilPrivate::CreateRenderingEntities(
   const std::string rgbdCameraSuffix{""};
   const std::string thermalCameraSuffix{"/image"};
   const std::string gpuLidarSuffix{"/scan"};
+  const std::string segmentationCameraSuffix{"/segmentation"};
+  const std::string boundingBoxCameraSuffix{"/boundingbox"};
 
   // Treat all pre-existent entities as new at startup
   // TODO(anyone) refactor Each and EachNew below to reduce duplicate code
@@ -1335,6 +1354,13 @@ void RenderUtilPrivate::CreateRenderingEntities(
           if (laserRetro != nullptr)
           {
             visual.SetLaserRetro(laserRetro->Data());
+          }
+
+          // set label
+          auto label = _ecm.Component<components::SemanticLabel>(_entity);
+          if (label != nullptr)
+          {
+            this->entityLabel[_entity] = label->Data();
           }
 
           if (auto temp = _ecm.Component<components::Temperature>(_entity))
@@ -1475,6 +1501,28 @@ void RenderUtilPrivate::CreateRenderingEntities(
                          thermalCameraSuffix);
             return true;
           });
+
+      // Create segmentation cameras
+      _ecm.Each<components::SegmentationCamera, components::ParentEntity>(
+        [&](const Entity &_entity,
+            const components::SegmentationCamera *_segmentationCamera,
+            const components::ParentEntity *_parent)->bool
+          {
+            addNewSensor(_entity, _segmentationCamera->Data(),
+              _parent->Data(), segmentationCameraSuffix);
+            return true;
+          });
+
+      // Create bounding box cameras
+      _ecm.Each<components::BoundingBoxCamera, components::ParentEntity>(
+        [&](const Entity &_entity,
+            const components::BoundingBoxCamera *_boundingBoxCamera,
+            const components::ParentEntity *_parent)->bool
+          {
+            addNewSensor(_entity, _boundingBoxCamera->Data(),
+              _parent->Data(), boundingBoxCameraSuffix);
+            return true;
+          });
     }
     this->initialized = true;
   }
@@ -1566,6 +1614,13 @@ void RenderUtilPrivate::CreateRenderingEntities(
           if (laserRetro != nullptr)
           {
             visual.SetLaserRetro(laserRetro->Data());
+          }
+
+          // set label
+          auto label = _ecm.Component<components::SemanticLabel>(_entity);
+          if (label != nullptr)
+          {
+            this->entityLabel[_entity] = label->Data();
           }
 
           if (auto temp = _ecm.Component<components::Temperature>(_entity))
@@ -1704,6 +1759,28 @@ void RenderUtilPrivate::CreateRenderingEntities(
           {
             addNewSensor(_entity, _thermalCamera->Data(), _parent->Data(),
                          thermalCameraSuffix);
+            return true;
+          });
+
+      // Create segmentation cameras
+      _ecm.EachNew<components::SegmentationCamera, components::ParentEntity>(
+        [&](const Entity &_entity,
+            const components::SegmentationCamera *_segmentationCamera,
+            const components::ParentEntity *_parent)->bool
+          {
+            addNewSensor(_entity, _segmentationCamera->Data(),
+              _parent->Data(), segmentationCameraSuffix);
+            return true;
+          });
+
+      // Create bounding box cameras
+      _ecm.EachNew<components::BoundingBoxCamera, components::ParentEntity>(
+        [&](const Entity &_entity,
+            const components::BoundingBoxCamera *_boundingBoxCamera,
+            const components::ParentEntity *_parent)->bool
+          {
+            addNewSensor(_entity, _boundingBoxCamera->Data(),
+              _parent->Data(), boundingBoxCameraSuffix);
             return true;
           });
     }
@@ -1857,6 +1934,26 @@ void RenderUtilPrivate::UpdateRenderingEntities(
         this->entityPoses[_entity] = _pose->Data();
         return true;
       });
+
+  // Update segmentation cameras
+  _ecm.Each<components::SegmentationCamera, components::Pose>(
+      [&](const Entity &_entity,
+        const components::SegmentationCamera *,
+        const components::Pose *_pose)->bool
+      {
+        this->entityPoses[_entity] = _pose->Data();
+        return true;
+      });
+
+  // Update bounding box cameras
+  _ecm.Each<components::BoundingBoxCamera, components::Pose>(
+      [&](const Entity &_entity,
+        const components::BoundingBoxCamera *,
+        const components::Pose *_pose)->bool
+      {
+        this->entityPoses[_entity] = _pose->Data();
+        return true;
+      });
 }
 
 //////////////////////////////////////////////////
@@ -1944,6 +2041,22 @@ void RenderUtilPrivate::RemoveRenderingEntities(
   // thermal cameras
   _ecm.EachRemoved<components::ThermalCamera>(
     [&](const Entity &_entity, const components::ThermalCamera *)->bool
+      {
+        this->removeEntities[_entity] = _info.iterations;
+        return true;
+      });
+
+  // segmentation cameras
+  _ecm.EachRemoved<components::SegmentationCamera>(
+    [&](const Entity &_entity, const components::SegmentationCamera *)->bool
+      {
+        this->removeEntities[_entity] = _info.iterations;
+        return true;
+      });
+
+  // bounding box cameras
+  _ecm.EachRemoved<components::BoundingBoxCamera>(
+    [&](const Entity &_entity, const components::BoundingBoxCamera *)->bool
       {
         this->removeEntities[_entity] = _info.iterations;
         return true;
@@ -2157,6 +2270,25 @@ const std::vector<Entity> &RenderUtil::SelectedEntities() const
 void RenderUtil::SetTransformActive(bool _active)
 {
   this->dataPtr->transformActive = _active;
+}
+
+////////////////////////////////////////////////
+void RenderUtilPrivate::UpdateVisualLabels(
+  const std::unordered_map<Entity, int> &_entityLabel)
+{
+  // set visual label
+  for (const auto &label : _entityLabel)
+  {
+    auto node = this->sceneManager.NodeById(label.first);
+    if (!node)
+      continue;
+
+    auto visual = std::dynamic_pointer_cast<rendering::Visual>(node);
+    if (!visual)
+      continue;
+
+    visual->SetUserData("label", label.second);
+  }
 }
 
 ////////////////////////////////////////////////
