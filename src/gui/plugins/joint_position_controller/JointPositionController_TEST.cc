@@ -67,7 +67,9 @@ TEST_F(JointPositionControllerGui, IGN_UTILS_TEST_ENABLED_ONLY_ON_LINUX(Load))
   app->AddPluginPath(std::string(PROJECT_BINARY_PATH) + "/lib");
 
   // Create GUI runner to handle gazebo::gui plugins
-  auto runner = new gazebo::GuiRunner("test");
+  ignition::gazebo::EntityComponentManager ecm;
+  ignition::gazebo::EventManager eventMgr;
+  auto runner = new gazebo::GuiRunner("test", ecm, eventMgr, false);
   runner->connect(app.get(), &gui::Application::PluginAdded,
                   runner, &gazebo::GuiRunner::OnPluginAdded);
   runner->setParent(gui::App());
@@ -142,7 +144,10 @@ TEST_F(JointPositionControllerGui,
   app->AddPluginPath(std::string(PROJECT_BINARY_PATH) + "/lib");
 
   // Create GUI runner to handle gazebo::gui plugins
-  auto runner = new gazebo::GuiRunner("test");
+  // TODO(anyone) Remove deprecation guard once GuiRunner becomes private
+  ignition::gazebo::EntityComponentManager ecm2;
+  ignition::gazebo::EventManager eventMgr;
+  auto runner = new gazebo::GuiRunner("test", ecm2, eventMgr, false);
   runner->connect(app.get(), &gui::Application::PluginAdded,
                   runner, &gazebo::GuiRunner::OnPluginAdded);
   runner->setParent(gui::App());
@@ -191,14 +196,16 @@ TEST_F(JointPositionControllerGui,
   plugin->SetModelEntity(1);
 
   // Request state again, do it in separate thread so we can call processEvents
+  bool isRequestDone = false;
   std::thread waiting([&]()
   {
     runner->RequestState();
+    isRequestDone = true;
   });
 
   int sleep = 0;
   int maxSleep = 30;
-  while (plugin->ModelName() != "model_name" && sleep < maxSleep)
+  while (sleep < maxSleep && !isRequestDone)
   {
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     QCoreApplication::processEvents();
@@ -217,4 +224,3 @@ TEST_F(JointPositionControllerGui,
   // Cleanup
   plugins.clear();
 }
-

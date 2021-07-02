@@ -538,6 +538,11 @@ void SimulationRunner::UpdateSystems()
       system->Update(this->currentInfo, this->entityCompMgr);
   }
 
+  if (serverConfig.SameProcessAsGUI())
+  {
+    this->eventMgr.Emit<events::UpdateSystems>();
+  }
+
   {
     IGN_PROFILE("PostUpdate");
     // If no systems implementing PostUpdate have been added, then
@@ -1184,7 +1189,7 @@ bool SimulationRunner::Paused() const
 }
 
 /////////////////////////////////////////////////
-const EntityComponentManager &SimulationRunner::EntityCompMgr() const
+EntityComponentManager &SimulationRunner::EntityCompMgr()
 {
   return this->entityCompMgr;
 }

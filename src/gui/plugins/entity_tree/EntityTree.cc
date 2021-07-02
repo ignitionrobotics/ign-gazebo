@@ -132,6 +132,11 @@ void TreeModel::AddEntity(unsigned int _entity, const QString &_entityName,
     return;
   }
 
+  if (this->entityItems.find(_entity) != this->entityItems.end())
+  {
+    return;
+  }
+
   // New entity item
   auto entityItem = new QStandardItem(_entityName);
   entityItem->setData(_entityName, this->roleNames().key("entityName"));

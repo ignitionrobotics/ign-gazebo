@@ -176,7 +176,9 @@ rendering::VisualPtr SceneManager::CreateModel(Entity _id,
   if (this->dataPtr->scene->HasVisualName(name))
   {
     ignerr << "Visual: [" << name << "] already exists" << std::endl;
-    return rendering::VisualPtr();
+    auto vis = this->dataPtr->scene->VisualByName(name);
+    this->dataPtr->visuals[_id] = vis;
+    return vis;
   }
 
   rendering::VisualPtr modelVis = this->dataPtr->scene->CreateVisual(name);
@@ -204,7 +206,9 @@ rendering::VisualPtr SceneManager::CreateLink(Entity _id,
   {
     ignerr << "Entity with Id: [" << _id << "] already exists in the scene"
            << std::endl;
-    return rendering::VisualPtr();
+    auto vis = this->dataPtr->scene->VisualById(_id);
+    this->dataPtr->visuals[_id] = vis;
+    return vis;
   }
 
   rendering::VisualPtr parent;
@@ -224,6 +228,12 @@ rendering::VisualPtr SceneManager::CreateLink(Entity _id,
       _link.Name();
   if (parent)
     name = parent->Name() + "::" + name;
+  if (this->dataPtr->scene->HasVisualName(name))
+  {
+    auto vis = this->dataPtr->scene->VisualByName(name);
+    this->dataPtr->visuals[_id] = vis;
+    return vis;
+  }
   rendering::VisualPtr linkVis = this->dataPtr->scene->CreateVisual(name);
   linkVis->SetUserData("gazebo-entity", static_cast<int>(_id));
   linkVis->SetUserData("pause-update", static_cast<int>(0));
@@ -271,6 +281,12 @@ rendering::VisualPtr SceneManager::CreateVisual(Entity _id,
       _visual.Name();
   if (parent)
     name = parent->Name() + "::" + name;
+  if (this->dataPtr->scene->HasVisualName(name))
+  {
+    auto vis = this->dataPtr->scene->VisualByName(name);
+    this->dataPtr->visuals[_id] = vis;
+    return vis;
+  }
   rendering::VisualPtr visualVis = this->dataPtr->scene->CreateVisual(name);
   visualVis->SetUserData("gazebo-entity", static_cast<int>(_id));
   visualVis->SetUserData("pause-update", static_cast<int>(0));
@@ -453,6 +469,8 @@ rendering::GeometryPtr SceneManager::LoadGeometry(const sdf::Geometry &_geom,
   else if (_geom.Type() == sdf::GeometryType::PLANE)
   {
     geom = this->dataPtr->scene->CreatePlane();
+    if (geom == nullptr)
+      return rendering::GeometryPtr();
     scale.X() = _geom.PlaneShape()->Size().X();
     scale.Y() = _geom.PlaneShape()->Size().Y();
 
@@ -1070,7 +1088,7 @@ rendering::LightPtr SceneManager::CreateLight(Entity _id,
   {
     ignerr << "Light with Id: [" << _id << "] already exists in the scene"
            << std::endl;
-    return rendering::LightPtr();
+    return this->dataPtr->lights.find(_id)->second;
   }
 
   rendering::VisualPtr parent;
@@ -1091,15 +1109,26 @@ rendering::LightPtr SceneManager::CreateLight(Entity _id,
   if (parent)
     name = parent->Name() +  "::" + name;
 
+  if (this->dataPtr->scene->HasLightName(name))
+  {
+    auto l = this->dataPtr->scene->LightByName(name);
+    this->dataPtr->lights[_id] = l;
+    return l;
+  }
+
   rendering::LightPtr light;
   switch (_light.Type())
   {
     case sdf::LightType::POINT:
       light = this->dataPtr->scene->CreatePointLight(name);
+      if (light == nullptr)
+        return rendering::LightPtr();
       break;
     case sdf::LightType::SPOT:
     {
       light = this->dataPtr->scene->CreateSpotLight(name);
+      if (light == nullptr)
+        return rendering::LightPtr();
       rendering::SpotLightPtr spotLight =
           std::dynamic_pointer_cast<rendering::SpotLight>(light);
       spotLight->SetInnerAngle(_light.SpotInnerAngle());
@@ -1111,6 +1140,8 @@ rendering::LightPtr SceneManager::CreateLight(Entity _id,
     case sdf::LightType::DIRECTIONAL:
     {
       light = this->dataPtr->scene->CreateDirectionalLight(name);
+      if (light == nullptr)
+        return rendering::LightPtr();
       rendering::DirectionalLightPtr dirLight =
           std::dynamic_pointer_cast<rendering::DirectionalLight>(light);
 
