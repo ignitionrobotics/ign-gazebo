@@ -160,6 +160,16 @@ Entity SdfEntityCreator::CreateEntities(const sdf::World *_world)
   this->dataPtr->ecm->CreateComponent(worldEntity,
       components::Gravity(_world->Gravity()));
 
+  // Physics
+  // \todo(anyone) Support picking a specific physics profile
+  auto physics = _world->PhysicsByIndex(0);
+  if (!physics)
+  {
+    physics = _world->PhysicsDefault();
+  }
+  this->dataPtr->ecm->CreateComponent(worldEntity,
+      components::Physics(*physics));
+
   // MagneticField
   this->dataPtr->ecm->CreateComponent(worldEntity,
       components::MagneticField(_world->MagneticField()));
