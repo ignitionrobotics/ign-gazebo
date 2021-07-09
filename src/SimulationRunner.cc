@@ -222,7 +222,6 @@ SimulationRunner::SimulationRunner(const sdf::World *_world,
 //////////////////////////////////////////////////
 SimulationRunner::~SimulationRunner()
 {
-  this->StopWorkerThreads();
 }
 
 /////////////////////////////////////////////////
@@ -403,57 +402,12 @@ void SimulationRunner::ProcessSystemQueue()
   std::lock_guard<std::mutex> lock(this->pendingSystemsMutex);
   auto pending = this->pendingSystems.size();
 
-  if (pending > 0)
-  {
-    // If additional systems are to be added, stop the existing threads.
-    this->StopWorkerThreads();
-  }
-
   for (const auto &system : this->pendingSystems)
   {
     this->AddSystemToRunner(system);
   }
 
   this->pendingSystems.clear();
-
-  // If additional systems were added, recreate the worker threads.
-  if (pending > 0)
-  {
-    igndbg << "Creating PostUpdate worker threads: "
-      << this->systemsPostupdate.size() + 1 << std::endl;
-
-    this->postUpdateStartBarrier =
-      std::make_unique<Barrier>(this->systemsPostupdate.size() + 1);
-    this->postUpdateStopBarrier =
-      std::make_unique<Barrier>(this->systemsPostupdate.size() + 1);
-
-    this->postUpdateThreadsRunning = true;
-    int id = 0;
-
-    for (auto &system : this->systemsPostupdate)
-    {
-      igndbg << "Creating postupdate worker thread (" << id << ")" << std::endl;
-
-      this->postUpdateThreads.push_back(std::thread([&, id]()
-      {
-        std::stringstream ss;
-        ss << "PostUpdateThread: " << id;
-        IGN_PROFILE_THREAD_NAME(ss.str().c_str());
-        while (this->postUpdateThreadsRunning)
-        {
-          this->postUpdateStartBarrier->Wait();
-          if (this->postUpdateThreadsRunning)
-          {
-            system->PostUpdate(this->currentInfo, this->entityCompMgr);
-          }
-          this->postUpdateStopBarrier->Wait();
-        }
-        igndbg << "Exiting postupdate worker thread ("
-          << id << ")" << std::endl;
-      }));
-      id++;
-    }
-  }
 }
 
 /////////////////////////////////////////////////
@@ -480,13 +434,8 @@ void SimulationRunner::UpdateSystems()
 
   {
     IGN_PROFILE("PostUpdate");
-    // If no systems implementing PostUpdate have been added, then
-    // the barriers will be uninitialized, so guard against that condition.
-    if (this->postUpdateStartBarrier && this->postUpdateStopBarrier)
-    {
-      this->postUpdateStartBarrier->Wait();
-      this->postUpdateStopBarrier->Wait();
-    }
+    for (auto& system : this->systemsPostupdate)
+      system->PostUpdate(this->currentInfo, this->entityCompMgr);
   }
 }
 
