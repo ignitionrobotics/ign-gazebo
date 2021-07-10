@@ -54,6 +54,17 @@ using namespace systems;
 
 class ignition::gazebo::systems::BuoyancyPrivate
 {
+  public: enum BuoyancyType
+  {
+    /// \brief Applies same buoyancy to whole world.
+    UNIFORM_BUOYANCY,
+    /// \brief Uses z-axis to determine buoyancy of the world
+    /// This is useful for worlds where we want to simulate the ocean interface.
+    /// Or for instance if we want to simulate different levels of buoyancies
+    /// at different depths.
+    GRADED_BUOYANCY
+  };
+  public: BuoyancyType buoyancyType{BuoyancyType::UNIFORM_BUOYANCY};
   /// \brief Get the fluid density based on a pose. This function can be
   /// used to adjust the fluid density based on the pose of an object in the
   /// world. This function currently returns a constant value, see the todo
@@ -62,7 +73,7 @@ class ignition::gazebo::systems::BuoyancyPrivate
   /// pose frame is left undefined because this function currently returns
   /// a constant value, see the todo in the function implementation.
   /// \return The fluid density at the givein pose.
-  public: double FluidDensity(const math::Pose3d &_pose) const;
+  public: double UniformFluidDensity(const math::Pose3d &_pose) const;
 
   /// \brief Model interface
   public: Entity world{kNullEntity};
@@ -70,10 +81,223 @@ class ignition::gazebo::systems::BuoyancyPrivate
   /// \brief The density of the fluid in which the object is submerged in
   /// kg/m^3. Defaults to 1000, the fluid density of water.
   public: double fluidDensity{1000};
+
+  /// \brief When using GradedBuoyancy, we provide a different buoyancy for
+  /// each layer. The key on this map is height in meters and the value is fluid
+  /// density. I.E all the fluid between $key$m and $next_key$m has the density
+  /// $value$kg/m^3. Everything below the first key is considered as having
+  /// fluidDensity.
+  public: std::map<double, double> layers;
 };
 
+
+math::Vector3d getPointOnPlane(
+  math::Plane<double>& plane,
+  double x,
+  double y)
+{
+  auto z_val = (plane.Offset() - (plane.Normal().Dot({x,y,0})))/plane.Normal().Z();
+  auto coincidentPoint = math::Vector3d{x,y,z_val};
+
+  IGN_ASSERT((coincidentPoint.Dot(plane.Normal()) - plane.Offset()) < 1e-3,
+    "Point is not coincident with plane");
+
+  return coincidentPoint;
+}
+
+math::Vector3d solveForY(
+  math::Plane<double>& plane,
+  double x,
+  double z)
+{
+  auto y_val = (plane.Offset() - (plane.Normal().Dot({x,0,z})))/plane.Normal().Z();
+  auto coincidentPoint = math::Vector3d{x,y_val, z};
+
+  IGN_ASSERT(coincidentPoint.Dot(plane.Normal()) == plane.Offset(),
+    "Point is not coincident with plane");
+
+  return coincidentPoint;
+}
+
+double VolumeBelow(
+  sdf::Sphere sphere,
+  math::Pose3d position,
+  math::Plane<double> plane)
+{
+  auto r = sphere.Radius();
+  auto coincidentPoint = getPointOnPlane(plane, 1, 1);
+
+  auto vec = coincidentPoint - position.Pos();
+  auto h = r-vec.Dot(plane.Normal())/plane.Normal().Length();
+
+  if(h > 0)
+  {
+    return IGN_PI*h*h*(3*r-h)/3;
+  }
+  else
+  {
+    return 4/3*IGN_PI*r*r*r;
+  }
+}
+
+
+
+std::pair<math::Vector3d, math::Vector3d>
+  GetCylinderIntersectionsAtZ(
+    sdf::Cylinder cylinder,
+    math::Plane<double> plane,
+    double z)
+{
+  auto k = (plane.Offset() - plane.Normal().Z() * z)/cylinder.Radius();
+  auto a = plane.Normal().X();
+  auto b = plane.Normal().Y();
+
+  auto internal = (b - sqrt(a*a + b*b - k*k))/(a+k);
+  auto theta1 = 2*(atan(internal));
+  auto theta2 = 2*(atan(-internal));
+
+  math::Vector3d intersect1
+  {
+    cylinder.Radius() * cos(theta1),
+    cylinder.Radius() * sin(theta1),
+    z
+  };
+
+  math::Vector3d intersect2
+  {
+    cylinder.Radius() * cos(theta2),
+    cylinder.Radius() * sin(theta2),
+    z
+  };
+
+  return {intersect1, intersect2};
+}
+
+////////////////////////////////////////////////////
+/// Volume of cylindrical wedge as given by:
+/// https://mathworld.wolfram.com/CylindricalWedge.html
+double WedgeVolume(
+  double radius,
+  double b,
+  double a,
+  double h)
+{
+  auto r = radius;
+  auto psi = IGN_PI_2 + atan((b- r)/a);
+  return h/(3*b)*(a*(3*r*r - a*a) + 3*r*r*(b-r)*psi);
+}
+
+
+double CircleSegmentSliceArea(
+  sdf::Cylinder cylinder,
+  math::Vector3d point1,
+  math::Vector3d point2,
+  double z)
+{
+  math::Vector3d center{0,0,z};
+  auto a1 = point1-center;
+  auto a2 = point2-center;
+  auto cosDist = (a1).Dot(a2);
+  auto theta = acos(cosDist / (a1.Length() * a2.Length()));
+  auto r = cylinder.Radius();
+
+  return r * r * (theta - sin(theta)) / 2;
+}
+
+////////////////////////////////////////////////////
+/// Approximate horizontal wedge volume
+/// Sympy can't find an integral even after 20 minutes
+/// So I guess it doesn't work.
+double ApproxHWedgeVolume(
+  sdf::Cylinder cylinder,
+  math::Plane<double> tranformed_plane)
+{
+  auto length = cylinder.Length();
+  auto [int1, int2] = GetCylinderIntersectionsAtZ(
+    cylinder,
+    tranformed_plane,
+    length / 2);
+
+  // Doing more of these will give better approx. For now 3 is good enough
+  auto area1 = CircleSegmentSliceArea(cylinder, int1, int2, length/2);
+  auto area2 = CircleSegmentSliceArea(cylinder, int1, int2, -length/2);
+  auto area3 = CircleSegmentSliceArea(cylinder, int1, int2, 0);
+
+  auto average_area = (area1 + area2 + area3)/3;
+
+  return average_area * length;
+}
+
+///////////////////////////////////////////////////
+double VolumeBelow(
+  sdf::Cylinder cylinder,
+  math::Pose3d pos,
+  math::Plane<double> plane)
+{
+  // This function is extremely hairy it needs to account for 3 different cases
+  // 1. Horizontal cut parallel to the cylinder's axis going through both flat
+  // faces
+  // 2. Horizontal cut going through one flat faces
+  // 3. Horizontal cut going through zero flat faces
+  auto length = cylinder.Length();
+  auto radius = cylinder.Radius();
+
+  auto transformedNormal = pos.Rot().RotateVector(plane.Normal());
+
+  auto z_val = (plane.Offset() - (plane.Normal().Dot({1,1,0})))
+    /plane.Normal().Z();
+  auto coincidentPoint = math::Vector3d{1,1,z_val};
+
+  //Transform plane into local coordinate frame.
+  math::Matrix4d pose(pos);
+  auto transformedPoint = pose.TransformAffine(coincidentPoint);
+  auto offset = transformedNormal.Dot(transformedPoint);
+  math::Plane<double> transformedPlane(transformedNormal, offset);
+
+  //Compute intersection point of plane
+  auto theta = atan2(transformedNormal.Y(), transformedNormal.X());
+  auto x = radius * cos(theta);
+  auto y = radius * sin(theta);
+  auto point_max = getPointOnPlane(transformedPlane, x, y);
+  x = radius * cos(theta + IGN_PI);
+  y = radius * sin(theta + IGN_PI);
+  auto point_min = getPointOnPlane(transformedPlane, x, y);
+
+  //Get case type
+  if(abs(point_max.Z()) > length/2)
+  {
+    if(abs(point_min.Z()) > length/2)
+    {
+      // Plane cuts through both flat faces
+      // Need to average the volume. Closed form integral of the surface
+      // is too hard to find
+      return ApproxHWedgeVolume(cylinder, transformedPlane);
+    }
+    else
+    {
+      // Cuts through one flat face
+      // Point Min will be the point where it cuts through
+      // Next we need to determine which way is up.
+
+    }
+  }
+  else if(abs(point_min.Z()) > length/2)
+  {
+    // Cuts through one flat face
+  }
+  else
+  {
+    // Plane Cuts through no flat faces.
+    auto a = abs(point_max.Z()) + length/2;
+    auto b = abs(point_min.Z()) + length/2;
+    auto avg_height = (a + b)/2;
+    return avg_height * IGN_PI * radius * radius;
+  }
+
+}
+
 //////////////////////////////////////////////////
-double BuoyancyPrivate::FluidDensity(const math::Pose3d & /*_pose*/) const
+double BuoyancyPrivate::UniformFluidDensity(const math::Pose3d & /*_pose*/) const
 {
   // \todo(nkoenig) Adjust the fluid density based on the provided pose.
   // This could take into acount:
@@ -113,6 +337,26 @@ void Buoyancy::Configure(const Entity &_entity,
   if (_sdf->HasElement("uniform_fluid_density"))
   {
     this->dataPtr->fluidDensity = _sdf->Get<double>("uniform_fluid_density");
+  }
+  else if(_sdf->HasElement("graded_buoyancy"))
+  {
+    this->dataPtr->buoyancyType =
+      BuoyancyPrivate::BuoyancyType::GRADED_BUOYANCY;
+    auto gradedElement = _sdf->GetElementDescription("graded_buoyancy");
+    auto argument = gradedElement->GetFirstElement();
+    while(argument != nullptr)
+    {
+      if(argument->GetName() == "default_density")
+      {
+        argument->GetValue()->Get<double>(this->dataPtr->fluidDensity);
+      }
+      if(argument->GetName() == "density_change")
+      {
+        auto depth = argument->Get<double>("above_depth");
+        auto density = argument->Get<double>("density");
+      }
+      argument = argument->GetNextElement();
+    }
   }
 }
 
@@ -234,33 +478,45 @@ void Buoyancy::PreUpdate(const ignition::gazebo::UpdateInfo &_info,
 
   _ecm.Each<components::Link,
             components::Volume,
-            components::CenterOfVolume>(
+            components::CenterOfVolume,
+            components::CollisionElement>(
       [&](const Entity &_entity,
           const components::Link *,
           const components::Volume *_volume,
-          const components::CenterOfVolume *_centerOfVolume) -> bool
+          const components::CenterOfVolume *_centerOfVolume,
+          const components::CollisionElement *_collision_element) -> bool
     {
       // World pose of the link.
       math::Pose3d linkWorldPose = worldPose(_entity, _ecm);
 
+      math::Vector3d buoyancy;
       // By Archimedes' principle,
       // buoyancy = -(mass*gravity)*fluid_density/object_density
       // object_density = mass/volume, so the mass term cancels.
-      math::Vector3d buoyancy =
-        -this->dataPtr->FluidDensity(linkWorldPose) *
+      if(this->dataPtr->buoyancyType
+        == BuoyancyPrivate::BuoyancyType::UNIFORM_BUOYANCY)
+      {
+        buoyancy =
+        -this->dataPtr->UniformFluidDensity(linkWorldPose) *
         _volume->Data() * gravity->Data();
 
-      // Convert the center of volume to the world frame
-      math::Vector3d offsetWorld = linkWorldPose.Rot().RotateVector(
-          _centerOfVolume->Data());
-      // Compute the torque that should be applied due to buoyancy and
-      // the center of volume.
-      math::Vector3d torque = offsetWorld.Cross(buoyancy);
+        // Convert the center of volume to the world frame
+        math::Vector3d offsetWorld = linkWorldPose.Rot().RotateVector(
+            _centerOfVolume->Data());
+        // Compute the torque that should be applied due to buoyancy and
+        // the center of volume.
+        math::Vector3d torque = offsetWorld.Cross(buoyancy);
 
-      // Apply the wrench to the link. This wrench is applied in the
-      // Physics System.
-      Link link(_entity);
-      link.AddWorldWrench(_ecm, buoyancy, torque);
+        // Apply the wrench to the link. This wrench is applied in the
+        // Physics System.
+        Link link(_entity);
+        link.AddWorldWrench(_ecm, buoyancy, torque);
+      }
+      else if(this->dataPtr->buoyancyType
+        == BuoyancyPrivate::BuoyancyType::GRADED_BUOYANCY)
+      {
+
+      }
 
       return true;
   });
