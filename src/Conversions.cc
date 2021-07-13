@@ -22,6 +22,7 @@
 #include <ignition/msgs/entity.pb.h>
 #include <ignition/msgs/geometry.pb.h>
 #include <ignition/msgs/gui.pb.h>
+#include <ignition/msgs/gps_sensor.pb.h>
 #include <ignition/msgs/imu_sensor.pb.h>
 #include <ignition/msgs/lidar_sensor.pb.h>
 #include <ignition/msgs/actor.pb.h>
@@ -49,6 +50,7 @@
 #include <sdf/Geometry.hh>
 #include <sdf/Gui.hh>
 #include <sdf/Imu.hh>
+#include <sdf/Gps.hh>
 #include <sdf/Lidar.hh>
 #include <sdf/Light.hh>
 #include <sdf/Magnetometer.hh>
@@ -891,6 +893,34 @@ msgs::Sensor ignition::gazebo::convert(const sdf::Sensor &_in)
     else
     {
       ignerr << "Attempting to convert a camera SDF sensor, but the "
+        << "sensor pointer is null.\n";
+    }
+  }
+  else if (_in.Type() == sdf::SensorType::GPS)
+  {
+    if (_in.GpsSensor())
+    {
+      msgs::GPSSensor *sensor = out.mutable_gps();
+
+      if (_in.GpsSensor()->PositionNoise().Type() != sdf::NoiseType::NONE)
+      {
+        ignition::gazebo::set(sensor->mutable_position()->mutable_horizontal_noise(),
+            _in.GpsSensor()->PositionNoise());
+        ignition::gazebo::set(sensor->mutable_position()->mutable_vertical_noise(),
+            _in.GpsSensor()->PositionNoise());
+
+      }
+      if (_in.GpsSensor()->VelocityNoise().Type() != sdf::NoiseType::NONE)
+      {
+        ignition::gazebo::set(sensor->mutable_velocity()->mutable_horizontal_noise(),
+            _in.GpsSensor()->VelocityNoise());
+        ignition::gazebo::set(sensor->mutable_velocity()->mutable_vertical_noise(),
+            _in.GpsSensor()->VelocityNoise());
+      }
+    }
+    else
+    {
+      ignerr << "Attempting to convert a GPS SDF sensor, but the "
         << "sensor pointer is null.\n";
     }
   }
