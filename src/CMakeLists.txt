@@ -42,8 +42,10 @@ target_link_libraries(${ign_lib_target}
 
 set (sources
   Barrier.cc
+  BaseView.cc
   Conversions.cc
   EntityComponentManager.cc
+  EntityComponentStorage.cc
   LevelManager.cc
   Link.cc
   Model.cc
@@ -55,7 +57,6 @@ set (sources
   SimulationRunner.cc
   SystemLoader.cc
   Util.cc
-  View.cc
   World.cc
   ${PROTO_PRIVATE_SRC}
   ${network_sources}
@@ -64,23 +65,25 @@ set (sources
 set (gtest_sources
   ${gtest_sources}
   Barrier_TEST.cc
-  Component_TEST.cc
+  BaseView_TEST.cc
   ComponentFactory_TEST.cc
+  Component_TEST.cc
   Conversions_TEST.cc
   EntityComponentManager_TEST.cc
+  EntityComponentStorage_TEST.cc
   EventManager_TEST.cc
-  ign_TEST.cc
   Link_TEST.cc
   Model_TEST.cc
   SdfEntityCreator_TEST.cc
   SdfGenerator_TEST.cc
-  Server_TEST.cc
   ServerConfig_TEST.cc
+  Server_TEST.cc
   SimulationRunner_TEST.cc
-  System_TEST.cc
   SystemLoader_TEST.cc
+  System_TEST.cc
   Util_TEST.cc
   World_TEST.cc
+  ign_TEST.cc
   network/NetworkConfig_TEST.cc
   network/PeerTracker_TEST.cc
   network/NetworkManager_TEST.cc
