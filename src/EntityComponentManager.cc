@@ -1252,12 +1252,9 @@ void EntityComponentManager::SetState(
       // Get type id
       auto typeId = newComp->TypeId();
 
-      // TODO(louise) Move into if, see TODO below
-      this->RemoveComponent(entity, typeId);
-
-      // Remove component
       if (compMsg.remove())
       {
+        this->RemoveComponent(entity, typeId);
         continue;
       }
 
@@ -1283,6 +1280,8 @@ void EntityComponentManager::SetState(
         // When above TODO is addressed, uncomment AddModifiedComponent below
         // unless calling SetChanged (which already calls AddModifiedComponent)
         // this->dataPtr->AddModifiedComponent(entity);
+        comp->Deserialize(istr);
+        this->SetChanged(entity, typeId, ComponentState::PeriodicChange);
       }
     }
   }

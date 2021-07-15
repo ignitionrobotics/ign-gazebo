@@ -29,6 +29,7 @@
 #include <ignition/gazebo/Entity.hh>
 #include <ignition/transport/Node.hh>
 
+#include "msgs/secondary_step.pb.h"
 #include "msgs/simulation_step.pb.h"
 
 #include "NetworkManager.hh"
@@ -81,6 +82,11 @@ namespace ignition
       /// \return True if simulation step was successfully synced.
       public: bool Step(const UpdateInfo &_info);
 
+      /// Number of iterations a secondary can move ahead.
+      /// TODO(blast545): consider using as a parameter that can be configured
+      /// before starting the simulation
+      public: static constexpr uint64_t kSecondaryIterations = 1000uLL;
+
       // Documentation inherited
       public: std::string Namespace() const override;
 
@@ -90,7 +96,7 @@ namespace ignition
 
       /// \brief Callback for step ack messages.
       /// \param[in] _msg Message containing secondary's updated state.
-      private: void OnStepAck(const msgs::SerializedStateMap &_msg);
+      private: void OnStepAck(const private_msgs::SecondaryStep &_msg);
 
       /// \brief Check if the step publisher has connections.
       private: bool SecondariesCanStep() const;
@@ -105,7 +111,8 @@ namespace ignition
       /// \param[in] _secondary Secondary identifier.
       /// \param[out] _msg Message to be populated.
       private: void SetAffinity(Entity _performer,
-          const std::string &_secondary, private_msgs::PerformerAffinity *_msg);
+          const std::string &_secondary,
+          private_msgs::PerformerAffinity *_msg);
 
       /// \brief Container of currently used secondary peers
       private: std::map<std::string, SecondaryControl::Ptr> secondaries;
@@ -117,10 +124,22 @@ namespace ignition
       private: ignition::transport::Node::Publisher simStepPub;
 
       /// \brief Keep track of states received from secondaries.
-      private: std::vector<msgs::SerializedStateMap> secondaryStates;
+      private: uint64_t nextIteration{1u};
 
-      /// \brief Promise used to notify when all secondaryStates where received.
-      private: std::promise<void> secondaryStatesPromise;
+      /// \brief Keep track of states received from secondaries.
+      /// TODO(ivanpauno): Maybe a `deque` here instead of a `map`.
+      private: std::map<uint64_t, std::vector<private_msgs::SecondaryStep>>
+            secondaryStates;
+
+      /// \brief Mutex used to protect secondaryStates map.
+      private: std::mutex secondaryStatesMutex;
+
+      /// \brief Condition variable used to notify when secondaryStates
+      /// map has more info.
+      private: std::condition_variable secondaryStatesCv;
+
+      /// \brief Indicates if the last step was in paused state;
+      private: bool paused{true};
     };
     }
   }  // namespace gazebo

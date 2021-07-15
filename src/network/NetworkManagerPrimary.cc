@@ -22,12 +22,14 @@
 #include <set>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include <ignition/common/Console.hh>
 #include <ignition/common/Util.hh>
 #include <ignition/common/Profiler.hh>
 
 #include "msgs/peer_control.pb.h"
+#include "msgs/secondary_step.pb.h"
 #include "msgs/simulation_step.pb.h"
 
 #include "ignition/gazebo/components/PerformerAffinity.hh"
@@ -129,55 +131,82 @@ bool NetworkManagerPrimary::Step(const UpdateInfo &_info)
     return false;
   }
 
-  private_msgs::SimulationStep step;
-  step.mutable_stats()->CopyFrom(convert<msgs::WorldStatistics>(_info));
+  // TODO(ivanpauno): If secondaries received a step message allowing them to
+  // move ahead N iterations (hardcoded to 1000 now),
+  // until the secondaries completed those N steps the simulation cannot be
+  // paused, the step size cannot be changed, etc.
+  // This should be handle in a better fashion.
+  // Note: send an ack each N/2 iterations, allows secondaries
+  // to move ahead faster.
+  if ( ((0uLL == _info.iterations % (this->kSecondaryIterations/2))
+        || this->paused) && !_info.paused) {
+    // Allow secondaries to continue moving forward each N steps (1000).
+    // Also send a message if the simulation was paused and now it's running.
+    private_msgs::SimulationStep step;
+    step.mutable_stats()->CopyFrom(convert<msgs::WorldStatistics>(_info));
+    step.set_max_iterations(_info.iterations + this->kSecondaryIterations);
 
-  // Affinities that changed this step
-  this->PopulateAffinities(step);
-
-  // Check all secondaries are ready to receive steps - only do this once at
-  // startup
-  if (!this->SecondariesCanStep())
-  {
-    return false;
+    // TODO(ivanpauno): Affinities should only be calculated at startup.
+    // Then we should have logic to detect if performers are "far apart",
+    // "viewing each other", "interacting".
+    // In the first case secondaries can run asynchronously (implemented).
+    // In the second a perfect lockstep is needed (TODO).
+    // In the third case, physics should be simulated in the same secondary,
+    // and we need to run the preUpdate/Update/postUpdate in a perfect
+    // lockstep fashion.
+    this->PopulateAffinities(step);
+    this->simStepPub.Publish(step);
   }
-
-  // Send step to all secondaries
-  this->secondaryStates.clear();
-  this->secondaryStatesPromise = std::promise<void>{};
-  auto future = this->secondaryStatesPromise.get_future();
-  this->simStepPub.Publish(step);
+  this->paused = _info.paused;
 
   // Block until all secondaries are done
-  {
-    IGN_PROFILE("Waiting for secondaries");
-
-    auto result = future.wait_for(10s);
-
-    if (std::future_status::ready != result)
+  if (_info.iterations >= this->nextIteration && !_info.paused) {
+    // Update state based on secondaries messages.
+    std::vector<private_msgs::SecondaryStep> secondariesSteps;
     {
-      ignerr << "Waited 10 s and got only [" << this->secondaryStates.size()
-             << " / " << this->secondaries.size()
-             << "] responses from secondaries. Stopping simulation."
-             << std::endl;
-      this->dataPtr->eventMgr->Emit<events::Stop>();
+      std::unique_lock<std::mutex> guard{this->secondaryStatesMutex};
+
+      const size_t nSecondaries = this->secondaries.size();
+      auto it = this->secondaryStates.find(_info.iterations);
+      for(;
+        it == this->secondaryStates.end() || it->second.size() != nSecondaries;
+        it = this->secondaryStates.find(_info.iterations))
+      {
+        // SAFETY: This doesn't suffer from lost wakeups because we're first
+        // taking the lock, then checking the condition and finally waiting
+        // the condition variable.
+        this->secondaryStatesCv.wait(guard);
+      }
+
+      ++this->nextIteration;
+      secondariesSteps = std::move(it->second);
+      this->secondaryStates.erase(this->secondaryStates.begin(), ++it);
+    }
+
+    if (
+      !std::all_of(
+        secondariesSteps.begin(), secondariesSteps.end(),
+        [&_info](const auto & elem) {
+          auto info = convert<UpdateInfo>(elem.stats());
+          return info.simTime == _info.simTime && info.dt == _info.dt;
+        }))
+    {
+      ignerr << "Secondaries are running asynchronously and their simulation "
+             << "time is different" << std::endl;
       return false;
     }
-  }
 
-  // Update primary state with states received from secondaries
-  {
-    IGN_PROFILE("Updating primary state");
-    for (const auto &msg : this->secondaryStates)
     {
-      this->dataPtr->ecm->SetState(msg);
+      IGN_PROFILE("Updating primary state");
+      for (const auto &msg : secondariesSteps)
+      {
+        this->dataPtr->ecm->SetState(msg.serialized_map());
+      }
     }
-    this->secondaryStates.clear();
   }
 
   // Step all systems
   this->dataPtr->stepFunction(_info);
-
   this->dataPtr->ecm->SetAllComponentsUnchanged();
 
   return true;
@@ -197,12 +226,18 @@ std::map<std::string, SecondaryControl::Ptr>
 }
 
 //////////////////////////////////////////////////
-void NetworkManagerPrimary::OnStepAck(const msgs::SerializedStateMap &_msg)
+void NetworkManagerPrimary::OnStepAck(const private_msgs::SecondaryStep &_msg)
 {
-  this->secondaryStates.push_back(_msg);
-  if (this->secondaryStates.size() == this->secondaries.size())
+  std::unique_lock<std::mutex> guard{this->secondaryStatesMutex};
+  auto iteration = _msg.stats().iterations();
+  auto & secState = this->secondaryStates[iteration];
+  secState.emplace_back(_msg);
+  if (
+      iteration == this->nextIteration &&
+      secState.size() == this->secondaries.size())
   {
-    this->secondaryStatesPromise.set_value();
+    guard.unlock();  // no need to hold the lock while notifying
+    this->secondaryStatesCv.notify_one();
   }
 }
 
