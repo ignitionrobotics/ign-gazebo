@@ -31,6 +31,7 @@ set(gui_sources
   PARENT_SCOPE
 )
 
+ign_add_component(model SOURCES cmd/ModelCommandAPI.cc GET_TARGET_NAME model_lib_target)
 ign_add_component(ign SOURCES ign.cc GET_TARGET_NAME ign_lib_target)
 target_link_libraries(${ign_lib_target}
   PRIVATE
@@ -59,6 +60,7 @@ set (sources
   Util.cc
   View.cc
   World.cc
+  cmd/ModelCommandAPI.cc
   ${PROTO_PRIVATE_SRC}
   ${network_sources}
 )

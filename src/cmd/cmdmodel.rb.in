@@ -77,7 +77,7 @@ class Cmd
 
     opt_parser = OptionParser.new do |opts|
       opts.banner = usage
-  
+
       opts.on('-h', '--help') do
           puts usage
           exit
@@ -124,8 +124,8 @@ class Cmd
 
     options
   end # parse()
-  
-  
+
+
   def execute(args)
     options = parse(args)
 
@@ -159,7 +159,7 @@ class Cmd
 
       Importer.cmdModelInfo(options['model'], options['pose'], options['link'],
       options['link_name'], options['joint'], options['joint_name'])
-    else 
+    else
       puts 'Command error: I do not have an implementation for '\
         "command [ign #{options['command']}]."
     end
